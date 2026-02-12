@@ -401,13 +401,15 @@ What are the effects of `avgfood` and `groupsize` now that you have accounted fo
 
 How does this interpretation change your interpretation from the univariate regressions of each variable separately with `weight`?
 
-It shows that
+**It shows that when modeled separately, there appears to be no relationship because the effect of `avgfood`** **and** `groupsize` **on** **weight oppose each other. This masks the association between food or group size and weight. Only when we model them together, are the relationships between each variable on weight revealed.**
 
 ------------------------------------------------------------------------
 
 #### Q2.10c
 
 Provide a small discussion (2-4 sentences) explaining in your own words why these results turned out the way they did, in the context of the ecological system of fox territories. Include why you think that the univariate regressions may have suggested no relationship while the multiple regression suggests a different answer.
+
+**We found no change in fox weight with food availability or group size when we modeled the effect of these variables on weight in univariate models. However, when we modeled both variables together in a multivariate regression, we found an increase of 0.47 standard deviations in weight per 1 standard deviation increase in average food availability. We also found a decrease of 0.57 standard deviations in weight per 1 standard deviation increase in group size. These results suggest that, given our model, increased food availability but smaller group sizes increase fox weight. Because the effects of food availability and group size on fox weight oppose each other, they were not detectable when they were modeled separately.**
 
 ------------------------------------------------------------------------
 
