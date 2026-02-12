@@ -1,0 +1,423 @@
+---
+title: "Activity 11: Statistical reasoning 3: multiple regression and DAGs"
+subtitle: Feb. 11th, 2026, Anik Grearson, Jacob Metzger, Gabe Curiel
+format: pdf
+---
+
+Let's start by reading in the relevant packages
+
+```{r}
+library(brms) # for statistics
+library(tidyverse) # for data wrangling
+library(dagitty) # for loading DAGs
+
+# Add a function to scale and center. From rethinking package
+standardize <- function(x) {
+    x <- scale(x)
+    z <- as.numeric(x)
+    attr(z,"scaled:center") <- attr(x,"scaled:center")
+    attr(z,"scaled:scale") <- attr(x,"scaled:scale")
+    return(z)
+}
+```
+
+# 1. DAG practice
+
+![example DAG](example_dag.jpg)
+
+### Q1.1 Make a DAG
+
+```{r}
+# Create the DAG 
+mydag <- dagitty("dag {
+A -> C
+A -> U
+C -> B
+C -> Y
+U -> B
+U -> X
+X -> Y
+U [unobserved]
+}
+")
+
+plot(mydag)
+```
+
+------------------------------------------------------------------------
+
+There are four fundamental relations in a DAG: the fork, the pipe, the collider, and the descendent. This image shows them:
+
+![elemental confounds](elemental_confounds.jpg)
+
+### Q1.2 Identify forks
+
+Which forks do you see in the DAG you made on dagitty.net?
+
+1.  A \<- U -\> C
+2.  B \<- C -\> Y
+3.  X \<- U -\> B
+
+------------------------------------------------------------------------
+
+### Q1.3 Identify colliders
+
+Which colliders do you see?
+
+1.  U -\> B \<- C
+2.  X -\> Y \<- C
+
+------------------------------------------------------------------------
+
+### Q1.4 Modify the DAG
+
+Now modify the DAG (it should still be open on dagitty.net) to include the variable V, an unobserved cause of C and Y: C ← V → Y.
+
+```{r}
+mydag2 <- dagitty("dag {
+A -> C
+A -> U
+C -> B
+C -> Y
+U -> B
+U -> X
+V -> C
+V -> Y
+X -> Y
+U [unobserved]
+V [unobserved]
+}
+")
+```
+
+------------------------------------------------------------------------
+
+### Q1.5 Identify paths
+
+Reanalyze this new DAG. How many paths connect X to Y?
+
+1.  X -\> Y
+2.  X \<- U -\> B \<- C -\> Y (closed)
+3.  X \<- U \<- A -\> C -\> Y (open)
+4.  X \<- U -\> B \<- C \<- V -\> Y (closed)
+5.  X \<- U \<- A -\> C \<- V -\> Y (open)
+
+------------------------------------------------------------------------
+
+### Q1.6 Identify open backdoor paths
+
+Which paths must be closed to estimate the direct effect of X on Y? List the paths
+
+1.  X \<- U \<- A -\> C -\> Y (open)
+2.  X \<- U \<- A -\> C \<- V -\> Y (open)
+
+------------------------------------------------------------------------
+
+### Q1.7 Identify variables to close the backdoor(s)
+
+Given what you just wrote about paths to close, which variables should you condition on to estimate the direct effect of X on Y in your new DAG?
+
+```{r}
+# Use adjustment sets to figure out which variables to include to close the back door
+adjustmentSets(mydag2,
+				    exposure = 'X',
+            outcome = 'Y')
+```
+
+------------------------------------------------------------------------
+
+# 2. Foxes: Regression practice informed by DAGs
+
+For this section, we are going to implement what we learned about DAGs into an example about urban fox territories from the `rethinking` package. Let's load in the data:
+
+```{r}
+# Load in the fox data
+foxes <- read.csv('https://raw.githubusercontent.com/rmcelreath/rethinking/refs/heads/master/data/foxes.csv', sep = ';')
+```
+
+```{r}
+# Check out the fox data
+head(foxes)
+```
+
+From the Rethinking textbook: "The data in data(foxes) are 116 foxes from 30 different urban groups in England. These foxes are like street gangs. `Group size` varies from 2 to 8 individuals. Each group maintains its own urban territory. Some territories are larger than others. The `area` variable encodes this information. Some territories also have more `avgfood` than others. We want to model the `weight` of each fox \[in kg\]." For the questions below, we will assume the following DAG is appropriate for this system:
+
+![fox DAG](foxDAG.jpg)
+
+------------------------------------------------------------------------
+
+![elemental confounds](elemental_confounds.jpg)
+
+### Q2.1 Identify the fundamental relations in the fox DAG
+
+Which of the first three fundamental relations above (Fork, Pipe, and Collider) do you see in the Fox DAG?
+
+1.  Fork1: groupsize \<- avgfood -\> weight
+2.  Pipe1: area -\> avgfood -\> weight
+3.  Pipe2: area -\> avgfood -\> groupsize
+4.  Pipe3: avgfood -\> groupsize -\> weight
+5.  Collider1: avgfood -\> weight \<- groupsize
+
+No descendants
+
+------------------------------------------------------------------------
+
+## Total causal influence of area on weight
+
+[**Would increasing the area available to each fox make it heavier (healthier)?**]{.underline}
+
+Standardize weight to mean zero and standard deviation of 1
+
+```{r}
+# Use standardize function to standardize weight
+fox_dat <- foxes %>%
+  as_tibble() %>%
+  select(area, avgfood, weight, groupsize) %>%
+  mutate(across(everything(), standardize))
+```
+
+Simulate from some priors for a linear regression with intercept *alpha* and slope *beta*: *alpha* \~ Gaussian(0, 0.2), *beta* \~ Gaussian(0, 2)
+
+```{r}
+# Define number of simulations
+n <- 1000
+
+# Run simulation
+priorsims <- tibble(group = seq_len(n),
+       alpha = rnorm(n, 0, 0.2), # prior for alpha
+       beta = rnorm(n, 0, 2)) %>% # prior for beta
+  expand(nesting(group, alpha, beta), # the expand function gives us all possible combinations of the arguments
+         area = seq(from = -2, to = 2, length.out = 100)) %>% # set up a range of areas
+  mutate(weight = alpha + beta * area) # calculate weight from the parameters and area
+```
+
+Make a plot of what these priors imply.
+
+```{r}
+# Plot simulations
+ggplot(priorsims, aes(x = area, y = weight, group = group)) +
+  geom_line(alpha = 1 / 10) +
+  labs(x = "Standardized Area", y = "Standardized Weight")
+
+```
+
+------------------------------------------------------------------------
+
+### Q2.2 Minimum fox weight
+
+What to you seems like a reasonable minimum weight for a fox, in kg? **Assuming they are adults, a reasonable minimum weight would be around 2kg**
+
+------------------------------------------------------------------------
+
+### Q2.3 Maximum fox weight
+
+What to you seems like a reasonable minimum weight for a fox, in kg? **10kg**
+
+------------------------------------------------------------------------
+
+### Q2.4 Modify simulation plot
+
+Remake your prior predictive simulation plot and add two horizontal lines, one each for the minimum and maximum weights.
+
+```{r}
+# Standardize min/max weight values (i.e., subtract the mean and divide by the standard deviation of foxes$weight)
+ymin <- (2-mean(foxes$weight)) / sd (foxes$weight)
+ymax <- (10-mean(foxes$weight)) / sd (foxes$weight)
+
+# Replot with horizontal lines showing min/max standardized weight
+ggplot(priorsims, aes(x = area, y = weight, group = group)) +
+  geom_line(alpha = 1 / 10) +
+  labs(x = "Standardized Area", y = "Standardized Weight") +
+  geom_hline(yintercept=ymin, color="red") +
+  geom_hline(yintercept=ymax, color="red")
+```
+
+------------------------------------------------------------------------
+
+### Q2.5 Evaluate prior predictive simulation
+
+Do your priors seem reasonable? You haven't seen any data yet, though you have marked out the minimum and maximum weights you expect foxes to be. Do your priors greatly exceed those values? Please explain your thinking.
+
+**The priors don't seem super reasonable, because a lot of the lines in the simulation extend above and below the expected maximum/minimum weights.**
+
+------------------------------------------------------------------------
+
+### Q2.6 Refine priors
+
+Remake and plot a set of prior simulations that use priors you think are reasonable (adjusting the code from above would work well for this). Be sure to include the minimum and maximum fox weights that you expect. You can iterate on this a few times (simulate, plot, adjust, etc.) until you arrive at priors that make sense to you.
+
+```{r}
+# Number of simulations
+n <- 1000
+
+# Run simulation and adjust 
+priorsims2 <- tibble(group = seq_len(n),
+       alpha = rnorm(n, mean = 0, sd = 0.2), # prior for alpha (intercept)
+       beta = rnorm(n, mean = 0, sd = 0.5)) %>% # prior for beta (slope) , changed SD from 1 to 0.5
+  expand(nesting(group, alpha, beta),
+         area = seq(from = -2, to = 2, length.out = 100)) %>% # set up a range of areas
+  mutate(weight = alpha + beta * area) # calculate weight from the parameters and area
+
+# Plot simulations
+ggplot(priorsims2, aes(x = area, y = weight, group = group)) +
+  geom_line(alpha = 1 / 10) +
+  labs(x = "Standardized Area", y = "Standardized Weight") +
+  geom_hline(yintercept=ymin, color="red") +
+  geom_hline(yintercept=ymax, color="red")
+```
+
+------------------------------------------------------------------------
+
+## Run models
+
+Run a model predicting average food as a function of area. Modify the code for the priors below to match the priors you just chose.
+
+```{r}
+# Run the model - What is the effect of area on food?
+area_on_food <- brm(avgfood ~ 1 + area, 
+                    data = fox_dat, 
+                    family = gaussian,
+                    # Here we set the priors that we investigated earlier
+                    prior = c(prior(normal(0, 0.2), class = Intercept),
+                              prior(normal(0, 0.5), class = b,), #Change SD to 0.5
+                              prior(exponential(1), class = sigma)),
+                    iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234,
+                    file = "output/area_on_food")
+```
+
+Check out the summary:
+
+```{r}
+summary(area_on_food)
+```
+
+We see a fairly strong effect of area on the average amount of food. Because we standardized each variable by standard deviations, our units are now in "standard deviations". (*We can backtransform these value to translate this back to the normal units! We won't do that here, as we'll get a lot more practice with that when we get to generalized linear models, but just know that if you are annoyed by the unitless values, there's a way out!*)
+
+We find that for an increase of 1 standard deviation in area, we expect to see a 0.88 standard deviation increase in food. The 95% compatibility interval for the area parameter is 0.79 to 0.96, which does not include zero. Logically this makes sense, as a greater area would have more prey available.
+
+------------------------------------------------------------------------
+
+### Q2.7 Run a model for the impact of food on fox weight
+
+Now infer the total impact of adding food to a territory. Run a model with `weight` as a function of `avgfood`. Based on your results, does more food make foxes heavier? In your opinion, is this expected or unexpected? Please explain in two (2) or more sentences.
+
+**According to our model, there appears to be no effect of food on fox weight. While the estimated slope is -0.02 (i.e., for an increase of 1 SD in `avgfood`, we expect to see a 0.02 SD decrease in weight), the 95% compatibility interval spans from -0.21 to 0.16, which includes 0, suggesting that the slope is not different from zero (*given this model).* This is quite unexpected, because having more food should make a fox heavier.**
+
+```{r}
+# Run the model - what is the effect of food on weight?
+food_on_weight <- brm(weight ~ 1 + avgfood, 
+                    data = fox_dat, 
+                    family = gaussian,
+                    # Here we set the priors that we investigated earlier
+                    prior = c(prior(normal(0, 0.2), class = Intercept),
+                              prior(normal(0, 0.5), class = b,), #Change SD to 0.5
+                              prior(exponential(1), class = sigma)),
+                    iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234,
+                    file = "output/food_on_weight")
+
+summary(food_on_weight) # View summary
+plot(food_on_weight) # View posterior distributions + MCMC chains
+```
+
+------------------------------------------------------------------------
+
+### Q2.8 Is there a variable we should condition upon?
+
+We just estimated the total impact of `avgfood` on `weight`, which includes both direct and indirect paths. Think back to your DAG elemental confounds. If we want to estimate only the direct impact of `avgfood` on `weight`, which variable should we condition upon?
+
+**Yes! We should condition on group size because there's another *open* backdoor path that goes from `avgfood` to `weight` in our DAG: `avgfood` -\> `groupsize` -\> `weight`.**
+
+------------------------------------------------------------------------
+
+## Add in `groupsize`
+
+In the previous model we saw no effect of `avgfood` on fox `weight`, but we have an extra path that we need to account for, since `avgfood` flows to `weight` through `groupsize`.
+
+First, let's look at the separate effect of `groupsize` in a univariate regression, just like with `avgfood`.
+
+------------------------------------------------------------------------
+
+### Q2.9: What's your hypothesis about how group size affects fox weight?
+
+Before running the model, how do you think the number of foxes in a group `groupsize` would affect fox weight? Why?
+
+**A larger number of foxes in a group might actually limit weight because there are more foxes to consume available resources in a given area, so larger group sizes might have lower average weight.**
+
+------------------------------------------------------------------------
+
+Now let's run the model:
+
+```{r}
+# Run the model - What is the effect of group size on weight?
+group_on_weight <- brm(weight ~ 1 + groupsize, 
+                       data = fox_dat, 
+                       family = gaussian,
+                       prior = c(prior(normal(0, 0.2), class = Intercept),
+                                 prior(normal(0, 0.5), class = b,), # Again, change SD to 0.5
+                                 prior(exponential(1), class = sigma)),
+                       iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234,
+                       file = "output/group_on_weight")
+```
+
+```{r}
+summary(group_on_weight)
+```
+
+Similar to the total effect of `avgfood` on `weight` in a univariate regression, we see no effect; the estimate for the slope of `groupsize` on `weight` is -0.16, but the 95% CI are between -0.33 and 0.02, which includes 0. This suggests the effect of `groupsize` on `weight` could very well be zero, *given this model*.
+
+To estimate the **direct effect** of `avgfood` on `weight`, we need to block the indirect path through `groupsize`. To do that, we include `groupsize` in a multiple regression (along with our main interest, `avgfood`). (By coincidence, this will also give us the direct effect of `groupsize` on `weight`).
+
+Let's add in `groupsize` to block the pipe `weight`-\>`groupsize`-\>`avgfood`:
+
+```{r}
+# Run model - What is the direct effect of food on weight, after conditioning on group size?
+food_direct <- brm(weight ~ 1 + avgfood + groupsize, 
+                   data = fox_dat,
+                   family = gaussian,
+                   prior = c(prior(normal(0, 0.2), class = Intercept),
+                             prior(normal(0, 0.5), class = b,),
+                             prior(exponential(1), class = sigma)),
+                   iter = 4000, warmup = 2000, chains = 4, cores = 4, seed = 1234,
+                   file = "output/food_direct")
+
+summary(food_direct)
+```
+
+------------------------------------------------------------------------
+
+### Interpret the multiple regression output
+
+------------------------------------------------------------------------
+
+#### Q2.10a
+
+What are the effects of `avgfood` and `groupsize` now that you have accounted for both variables?
+
+**For an increase of 1 SD in `avgfood`, we see an increase in 0.47 SD in weight. The 95% compatibility interval for this is between 0.11 and 0.83, which doesn't include zero. For an increase of 1 SD in `groupsize`, we see a *decrease* by 0.57 SD in weight. The 95% compatibility interval for this variable is between -0.92 and -0.22, which also doesn't include zero. This suggests that, given our model, the slopes for both variables can reasonably be assumed to not be zero.**
+
+------------------------------------------------------------------------
+
+#### Q2.10b
+
+How does this interpretation change your interpretation from the univariate regressions of each variable separately with `weight`?
+
+It shows that
+
+------------------------------------------------------------------------
+
+#### Q2.10c
+
+Provide a small discussion (2-4 sentences) explaining in your own words why these results turned out the way they did, in the context of the ecological system of fox territories. Include why you think that the univariate regressions may have suggested no relationship while the multiple regression suggests a different answer.
+
+------------------------------------------------------------------------
+
+### Render to PDF
+
+When you have finished, remember to pull, stage, commit, and push with GitHub:
+
+-   Pull to check for updates to the remote branch
+-   Stage your edits (after saving your document!) by checking the documents you'd like to push
+-   Commit your changes with a commit message
+-   Push your changes to the remote branch
+
+Then submit the well-labeled PDF on Gradescope. Thanks!
